@@ -59,7 +59,7 @@ pillow==11.2.1
     # via streamlit
 protobuf==5.29.4
     # via streamlit
-psycopg2==2.9.10
+psycopg2-binary==2.9.10
     # via secure-data-encryption (pyproject.toml)
 pyarrow==19.0.1
     # via streamlit
