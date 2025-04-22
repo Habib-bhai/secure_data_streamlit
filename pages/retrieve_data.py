@@ -2,101 +2,73 @@ import streamlit as st
 import psycopg2
 from lib.utility_functions import hash_passkey, decrypt_data
 
-# Check if user is logged in
 if not st.experimental_user.is_logged_in:
     st.title("Please login to access the Retrieve Data page.")
 else:
     st.title("Retrieve Data")
 
-    # Initialize session state for encrypted data and passkeys
-    if "encrypted_data" not in st.session_state:
-        st.session_state.encrypted_data = []
-
+    # Initialize session state
+    if "encrypted_records" not in st.session_state:
+        st.session_state.encrypted_records = []
     if "failed_attempts" not in st.session_state:
         st.session_state.failed_attempts = 0
         
     # Retrieve data button
     if st.button("Retrieve Data"):
         try:
-            # Database connection
-            conn = psycopg2.connect(
-                host="localhost",
-                dbname="postgres",
-                user="postgres",
-                password="fucku@stupid@idiot",
+            with psycopg2.connect(
+                host="ep-dark-morning-a4yy58re-pooler.us-east-1.aws.neon.tech",
+                dbname="secureNeonDB",
+                user="secureNeonDB_owner",
+                password="npg_erjOGhI5T9QX",
                 port=5432
-            )
-            cur = conn.cursor()
+            ) as conn:
+                with conn.cursor() as cur:
+                    cur.execute('''SELECT encrypted_text, passkey, salt FROM encrypted_data''')
+                    st.session_state.encrypted_records = cur.fetchall()
             
-            # Fetch all encrypted data with passkeys
-            cur.execute('''SELECT encrypted_text, passkey FROM encrypted_data;''')
-            records = cur.fetchall()
-            
-            # Store results in session state (encrypted_text, hashed_passkey)
-            st.session_state.encrypted_data = records
-            
-            st.success(f"Retrieved {len(records)} encrypted records!")
+            st.success(f"Retrieved {len(st.session_state.encrypted_records)} records!")
             
         except Exception as e:
             st.error(f"Database error: {str(e)}")
-        finally:
-            if 'cur' in locals():
-                cur.close()
-            if 'conn' in locals():
-                conn.close()
 
-    # Only show selection if data exists
-    if st.session_state.encrypted_data:
-        # Get list of encrypted texts for display
-        encrypted_texts = [record[0] for record in st.session_state.encrypted_data]
+    # Display decryption interface if data exists
+    if st.session_state.encrypted_records:
+        # Create mapping of display text to full record
+        options = {f"Encrypted Data {i+1}": record for i, record in enumerate(st.session_state.encrypted_records)}
+        selected = st.selectbox("Select encrypted data", options.keys())
         
-        # User selection
-        selected_encrypted = st.selectbox(
-            "Select encrypted data",
-            encrypted_texts,
-            key="encrypted_select"
-        )
+        user_passkey = st.text_input("Enter your passkey", type="password")
         
-        # Passkey input
-        user_passkey = st.text_input(
-            "Enter your passkey",
-            type="password",
-            key="passkey_input"
-        )
-        
-        # Decryption button
         if st.button("Decrypt Data"):
+            encrypted_text, stored_hash, salt = options[selected]
+    
+    # Ensure salt is bytes (Postgres returns memoryview for BYTEA)
+            if isinstance(salt, memoryview):
+                salt = bytes(salt)
+            elif isinstance(salt, str):
+                salt = salt.encode()  # Fallback for text representation
+            
+            # Verify passkey first
+            if hash_passkey(user_passkey) != stored_hash:
+                st.session_state.failed_attempts += 1
+                st.warning(f"Invalid passkey! Attempts: {st.session_state.failed_attempts}/3")
+                if st.session_state.failed_attempts >= 3:
+                    st.error("Too many failed attempts. Logging out...")
+                    st.logout()
+                st.stop()
+    
             try:
-                # Find corresponding hashed passkey
-                stored_passkey = None
-                for record in st.session_state.encrypted_data:
-                    if record[0] == selected_encrypted:
-                        stored_passkey = record[1]
-                        break
+                # Reset attempts on successful verification
+                st.session_state.failed_attempts = 0
                 
-                if stored_passkey:
-                    # Hash user input
-                    hashed_input = hash_passkey(user_passkey)
-                    
-                    if hashed_input != stored_passkey:
-                        st.session_state.failed_attempts +=1
-                        st.warning(st.session_state.failed_attempts)
-                        if st.session_state.failed_attempts > 3:
-                            st.logout()
-                    
-                    # Verify passkey
-                    if hashed_input == stored_passkey:
-                        # Decrypt data
-                        decrypted = decrypt_data(selected_encrypted, stored_passkey)
-                        st.success("Decrypted successfully!")
-                        st.subheader("Decrypted Data:")
-                        st.write(decrypted)
-                    else:
-                        st.error("Invalid passkey - decryption failed")
-                else:
-                    st.error("No passkey found for selected data")
-                    
+                # Decrypt with proper salt handling
+                decrypted = decrypt_data(encrypted_text, user_passkey, salt)
+                st.success("Decrypted successfully!")
+                st.subheader("Decrypted Data:")
+                st.text_area("", value=decrypted, height=200)
+                
             except Exception as e:
-                st.error(f"Decryption error: {str(e)}")
+                st.error(f"Decryption failed: {str(e)}")
     else:
         st.write("No encrypted data available. Retrieve data first.")
